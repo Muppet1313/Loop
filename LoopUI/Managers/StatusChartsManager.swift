@@ -8,6 +8,7 @@
 
 import Foundation
 import HealthKit
+import LoopCore
 import LoopKit
 import SwiftCharts
 import os.log
@@ -194,6 +195,12 @@ public final class StatusChartsManager {
     public var alternatePredictedGlucosePoints: [ChartPoint]?
 
     public var targetGlucoseSchedule: GlucoseRangeSchedule? {
+        didSet {
+            targetGlucosePoints = []
+        }
+    }
+
+    public var scheduleOverride: TemporaryScheduleOverride? {
         didSet {
             targetGlucosePoints = []
         }
@@ -951,11 +958,10 @@ public final class StatusChartsManager {
             let xAxisValues = xAxisValues, xAxisValues.count > 1,
             let schedule = targetGlucoseSchedule
         {
-            targetGlucosePoints = ChartPoint.pointsForGlucoseRangeSchedule(schedule, xAxisValues: xAxisValues)
+            targetGlucosePoints = ChartPoint.pointsForGlucoseRangeSchedule(schedule, unit: glucoseUnit, xAxisValues: xAxisValues)
 
-            if let override = schedule.override {
+            if let override = scheduleOverride, override.isActive() || override.startDate > Date() {
                 targetOverridePoints = ChartPoint.pointsForGlucoseRangeScheduleOverride(override, unit: schedule.unit, xAxisValues: xAxisValues, extendEndDateToChart: true)
-
                 targetOverrideDurationPoints = ChartPoint.pointsForGlucoseRangeScheduleOverride(override, unit: schedule.unit, xAxisValues: xAxisValues)
             } else {
                 targetOverridePoints = []

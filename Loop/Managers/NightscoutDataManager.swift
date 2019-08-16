@@ -38,6 +38,7 @@ final class NightscoutDataManager {
         deviceManager.loopManager.getLoopState { (manager, state) in
             var loopError = state.error
             let recommendedBolus: Double?
+            
 
             recommendedBolus = state.recommendedBolus?.recommendation.amount
 
@@ -128,9 +129,93 @@ final class NightscoutDataManager {
         let loopName = Bundle.main.bundleDisplayName
         let loopVersion = Bundle.main.shortVersionString
 
+        //this is the only pill that has the option to modify the text
+        //to do that pass a different name value instead of loopName
         let loopStatus = LoopStatus(name: loopName, version: loopVersion, timestamp: statusTime, iob: iob, cob: cob, predicted: predicted, recommendedTempBasal: recommended, recommendedBolus: recommendedBolus, enacted: loopEnacted, failureReason: loopError)
+
+        let pumpStatus: NightscoutUploadKit.PumpStatus?
         
-        upload(pumpStatus: nil, loopStatus: loopStatus, deviceName: nil, firmwareVersion: nil, lastValidFrequency: nil, lastTuned: nil, uploaderStatus: getUploaderStatus())
+        if let pumpManagerStatus = deviceManager.pumpManagerStatus
+        {
+            
+            let battery: BatteryStatus?
+            
+            if let chargeRemaining = pumpManagerStatus.pumpBatteryChargeRemaining {
+                battery = BatteryStatus(percent: Int(round(chargeRemaining * 100)), voltage: nil, status: nil)
+            } else {
+                battery = nil
+            }
+            
+            let bolusing: Bool
+            if case .inProgress = pumpManagerStatus.bolusState {
+                bolusing = true
+            } else {
+                bolusing = false
+            }
+            
+            let currentReservoirUnits: Double?
+            if let lastReservoirValue = deviceManager.loopManager.doseStore.lastReservoirValue, lastReservoirValue.startDate > Date().addingTimeInterval(.minutes(-15)) {
+                currentReservoirUnits = lastReservoirValue.unitVolume
+            } else {
+                currentReservoirUnits = nil
+            }
+
+            pumpStatus = NightscoutUploadKit.PumpStatus(
+                clock: Date(),
+                pumpID: pumpManagerStatus.device.localIdentifier ?? "Unknown",
+                manufacturer: pumpManagerStatus.device.manufacturer,
+                model: pumpManagerStatus.device.model,
+                iob: nil,
+                battery: battery,
+                suspended: pumpManagerStatus.basalDeliveryState == .suspended,
+                bolusing: bolusing,
+                reservoir: currentReservoirUnits,
+                secondsFromGMT: pumpManagerStatus.timeZone.secondsFromGMT())
+        } else {
+            pumpStatus = nil
+        }
+        //add overrideStatus
+       
+        let overrideStatus: NightscoutUploadKit.OverrideStatus?
+        let settings = deviceManager.loopManager.settings
+        let unit: HKUnit = settings.glucoseTargetRangeSchedule?.unit ?? HKUnit.milligramsPerDeciliter
+        if let override = settings.scheduleOverride, override.isActive(),
+            let range = settings.glucoseTargetRangeScheduleApplyingOverrideIfActive?.value(at: Date()) {
+            let lowerTarget : HKQuantity = HKQuantity(unit : unit, doubleValue: range.minValue)
+            let upperTarget : HKQuantity = HKQuantity(unit : unit, doubleValue: range.maxValue)
+            let correctionRange = CorrectionRange(minValue: lowerTarget, maxValue: upperTarget)
+            let endDate = override.endDate
+            let duration : TimeInterval?
+            if override.duration == .indefinite {
+                duration = nil
+            }
+            else
+            {
+                duration = round(endDate.timeIntervalSince(Date()))
+                
+            }
+            let name : String?
+            
+            switch override.context {
+            case .preMeal:
+                    name = "preMeal"
+            case .custom:
+                    name = "Custom"
+            case .preset(let preset):
+                    name = preset.name
+            }
+            
+            
+            overrideStatus = NightscoutUploadKit.OverrideStatus(name: name, timestamp: Date(), active: true, currentCorrectionRange: correctionRange, duration: duration, multiplier: override.settings.insulinNeedsScaleFactor)
+            
+        }
+        
+        else
+        
+        {
+            overrideStatus = NightscoutUploadKit.OverrideStatus(timestamp: Date(), active: false)
+        }
+        upload(pumpStatus: pumpStatus, loopStatus: loopStatus, deviceName: nil, firmwareVersion: nil, uploaderStatus: getUploaderStatus(), overrideStatus: overrideStatus)
 
     }
     
@@ -147,21 +232,11 @@ final class NightscoutDataManager {
         return UploaderStatus(name: uploaderDevice.name, timestamp: Date(), battery: battery)
     }
 
-    func upload(pumpStatus: PumpManagerStatus) {
-        upload(
-            pumpStatus: pumpStatus.pumpStatus,
-            deviceName: pumpStatus.device?.name,
-            firmwareVersion: pumpStatus.device?.firmwareVersion,
-            lastValidFrequency: pumpStatus.lastValidFrequency,
-            lastTuned: pumpStatus.lastTuned
-        )
+    func upload(pumpStatus: NightscoutUploadKit.PumpStatus?, deviceName: String?, firmwareVersion: String?) {
+        upload(pumpStatus: pumpStatus, loopStatus: nil, deviceName: deviceName, firmwareVersion: firmwareVersion, uploaderStatus: nil, overrideStatus: nil)
     }
 
-    func upload(pumpStatus: NightscoutUploadKit.PumpStatus?, deviceName: String?, firmwareVersion: String?, lastValidFrequency: Measurement<UnitFrequency>?, lastTuned: Date?) {
-        upload(pumpStatus: pumpStatus, loopStatus: nil, deviceName: deviceName, firmwareVersion: firmwareVersion, lastValidFrequency: lastValidFrequency, lastTuned: lastTuned, uploaderStatus: nil)
-    }
-
-    private func upload(pumpStatus: NightscoutUploadKit.PumpStatus?, loopStatus: LoopStatus?, deviceName: String?, firmwareVersion: String?, lastValidFrequency: Measurement<UnitFrequency>?, lastTuned: Date?, uploaderStatus: UploaderStatus?) {
+    private func upload(pumpStatus: NightscoutUploadKit.PumpStatus?, loopStatus: LoopStatus?, deviceName: String?, firmwareVersion: String?, uploaderStatus: UploaderStatus?, overrideStatus: OverrideStatus?) {
 
         guard let uploader = deviceManager.remoteDataManager.nightscoutService.uploader else {
             return
@@ -176,22 +251,8 @@ final class NightscoutDataManager {
 
         let uploaderDevice = UIDevice.current
 
-        var radioAdapter: NightscoutUploadKit.RadioAdapter? = nil
-
-        if let firmwareVersion = firmwareVersion {
-            radioAdapter = NightscoutUploadKit.RadioAdapter(
-                hardware: "RileyLink",
-                frequency: lastValidFrequency?.value,
-                name: deviceName ?? "Unknown",
-                lastTuned: lastTuned,
-                firmwareVersion: firmwareVersion,
-                RSSI: nil, // TODO: device.RSSI,
-                pumpRSSI: nil // TODO: device.pumpRSSI
-            )
-        }
-
         // Build DeviceStatus
-        let deviceStatus = DeviceStatus(device: "loop://\(uploaderDevice.name)", timestamp: Date(), pumpStatus: pumpStatus, uploaderStatus: uploaderStatus, loopStatus: loopStatus, radioAdapter: radioAdapter)
+        let deviceStatus = DeviceStatus(device: "loop://\(uploaderDevice.name)", timestamp: Date(), pumpStatus: pumpStatus, uploaderStatus: uploaderStatus, loopStatus: loopStatus, radioAdapter: nil, overrideStatus: overrideStatus)
 
         self.lastDeviceStatusUpload = Date()
         uploader.uploadDeviceStatus(deviceStatus)
@@ -231,35 +292,3 @@ final class NightscoutDataManager {
     }
 }
 
-
-private extension PumpManagerStatus {
-    var batteryStatus: NightscoutUploadKit.BatteryStatus? {
-        return NightscoutUploadKit.BatteryStatus(
-            percent: battery?.percent != nil ? Int(battery!.percent! * 100) : nil,
-            voltage: battery?.voltage?.converted(to: .volts).value,
-            status: {
-                switch battery?.state {
-                case .normal?:
-                    return .normal
-                case .low?:
-                    return .low
-                case .none:
-                    return nil
-                }
-            }()
-        )
-    }
-
-    var pumpStatus: NightscoutUploadKit.PumpStatus {
-        return PumpStatus(
-            clock: date,
-            pumpID: device?.localIdentifier ?? "",
-            iob: nil,
-            battery: batteryStatus,
-            suspended: isSuspended,
-            bolusing: isBolusing,
-            reservoir: remainingReservoir?.doubleValue(for: .internationalUnit()),
-            secondsFromGMT: timeZone.secondsFromGMT()
-        )
-    }
-}

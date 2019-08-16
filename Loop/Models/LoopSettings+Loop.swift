@@ -5,14 +5,14 @@
 //  Copyright © 2018 LoopKit Authors. All rights reserved.
 //
 
+import LoopCore
 
 // MARK: - Static configuration
 extension LoopSettings {
     var enabledEffects: PredictionInputEffect {
-        var inputs = PredictionInputEffect.all
-        if !retrospectiveCorrectionEnabled {
-            inputs.remove(.retrospection)
-        }
+        let inputs = PredictionInputEffect.all
+        // To disable retrospective correction, uncomment line below and change `let` to `var` above
+        // inputs.remove(.retrospection)
         return inputs
     }
 }

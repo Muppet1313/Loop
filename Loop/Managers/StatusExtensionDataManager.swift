@@ -18,6 +18,7 @@ final class StatusExtensionDataManager {
         self.deviceManager = deviceDataManager
 
         NotificationCenter.default.addObserver(self, selector: #selector(update(_:)), name: .LoopDataUpdated, object: deviceDataManager.loopManager)
+        NotificationCenter.default.addObserver(self, selector: #selector(update(_:)), name: .PumpManagerChanged, object: nil)
     }
 
     fileprivate var defaults: UserDefaults? {
@@ -89,7 +90,7 @@ final class StatusExtensionDataManager {
             }
 
             let date = state.lastTempBasal?.startDate ?? Date()
-            if let scheduledBasal = manager.basalRateSchedule?.between(start: date, end: date).first {
+            if let scheduledBasal = manager.basalRateScheduleApplyingOverrideHistory?.between(start: date, end: date).first {
                 let netBasal = NetBasal(
                     lastTempBasal: state.lastTempBasal,
                     maxBasal: manager.settings.maximumBasalRatePerHour,
@@ -98,17 +99,22 @@ final class StatusExtensionDataManager {
 
                 context.netBasal = NetBasalContext(rate: netBasal.rate, percentage: netBasal.percent, start: netBasal.start, end: netBasal.end)
             }
-
-            context.batteryPercentage = dataManager.pumpManager?.pumpBatteryChargeRemaining
+            
+            
+            context.batteryPercentage = dataManager.pumpManager?.status.pumpBatteryChargeRemaining
             context.reservoirCapacity = dataManager.pumpManager?.pumpReservoirCapacity
 
-            if let sensorInfo = dataManager.sensorInfo {
+            if let sensorInfo = dataManager.cgmManager?.sensorState {
                 context.sensor = SensorDisplayableContext(
                     isStateValid: sensorInfo.isStateValid,
                     stateDescription: sensorInfo.stateDescription,
                     trendType: sensorInfo.trendType,
                     isLocal: sensorInfo.isLocal
                 )
+            }
+            
+            if let pumpManagerHUDProvider = dataManager.pumpManagerHUDProvider {
+                context.pumpManagerHUDViewsContext = PumpManagerHUDViewsContext(pumpManagerHUDViewsRawValue: PumpManagerHUDViewsRawValueFromHudProvider(pumpManagerHUDProvider))
             }
 
             completionHandler(context)

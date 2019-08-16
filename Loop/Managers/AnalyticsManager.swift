@@ -8,6 +8,8 @@
 
 import Foundation
 import Amplitude
+import LoopKit
+import LoopCore
 
 
 final class AnalyticsManager: IdentifiableClass {
@@ -113,16 +115,16 @@ final class AnalyticsManager: IdentifiableClass {
         if newValue.dosingEnabled != oldValue.dosingEnabled {
             logEvent("Closed loop enabled change")
         }
-
-        if newValue.retrospectiveCorrectionEnabled != oldValue.retrospectiveCorrectionEnabled {
-            logEvent("Retrospective correction enabled change")
+        
+        if newValue.integralRetrospectiveCorrectionEnabled != oldValue.integralRetrospectiveCorrectionEnabled {
+            logEvent("Integral retrospective correction enabled change")
         }
 
         if newValue.glucoseTargetRangeSchedule != oldValue.glucoseTargetRangeSchedule {
             if newValue.glucoseTargetRangeSchedule?.timeZone != oldValue.glucoseTargetRangeSchedule?.timeZone {
                 self.punpTimeZoneDidChange()
-            } else if newValue.glucoseTargetRangeSchedule?.override != oldValue.glucoseTargetRangeSchedule?.override {
-                logEvent("Glucose target range override change", outOfSession: true)
+            } else if newValue.scheduleOverride != oldValue.scheduleOverride {
+                logEvent("Temporary schedule override change", outOfSession: true)
             } else {
                 logEvent("Glucose target range change")
             }
@@ -132,7 +134,7 @@ final class AnalyticsManager: IdentifiableClass {
 
     // MARK: - Loop Events
 
-    func didAddCarbsFromWatch(_ carbs: Double) {
+    func didAddCarbsFromWatch() {
         logEvent("Carb entry created", withProperties: ["source" : "Watch"], outOfSession: true)
     }
 
